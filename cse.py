@@ -8,29 +8,13 @@ import os
 import subprocess
 import sys
 
-DATEFRMT = '%d %B %Y %H:%M:%S'
-COLORS: dict = {
-    'r': '[38;5;1m',
-    'g': '[38;5;2m',
-    'y': '[38;5;11m',
-}
+from helper import DATEFRMT, color_print, header_print, prog_print
 
-
-def color_print(msg: str, color='g', **kwargs) -> None:
-    """Color print a message."""
-    start = COLORS.get(color, '[0;0m')
-    print(f'\033{start}{msg}\033[0;0m', **kwargs)
-
-
-def prog_print(msg: str, **kwargs) -> None:
-    """Program print a message."""
-    print(f'{os.path.basename(sys.argv[0])}: {msg}', **kwargs)
-
-
-def header_print(msg: str, color='y', **kwargs) -> None:
-    """Print a header line."""
-    print(f'\n  \033{COLORS.get(color)}{msg}\n  {"-" * len(msg)}\033[0;0m\n',
-          **kwargs)
+try:
+    from dotenv import dotenv_values
+except ImportError:
+    sys.exit("%s: python-dotenv is required." %
+             (os.path.basename(sys.argv[0])))
 
 
 def parse_args() -> None:
@@ -168,12 +152,12 @@ def cse_sync(*args) -> None:
     flagc, flagf, flagu, pos_args = args
     if flagu:  # syncs cse ==> local
         for course in pos_args:
-            local_path = f"{CONFIG['local_path']}/"
+            local_path = f"{configuration.get('LOCAL_PATH')}/"
             if os.path.exists(local_path):
                 response = subprocess.run([
                     "rsync",
                     "-ai",
-                    f"{CONFIG['path']}/{course}",
+                    f"{configuration.get('CSE_LOCAL_PATH')}/{course}",
                     local_path,
                 ],
                                           capture_output=True,
@@ -219,20 +203,25 @@ def cse_sync(*args) -> None:
             print(f'no changes to \'{f}\'')
 
 
-configuration = os.path.expandvars('$HOME') + '/.config/.cse'
-if os.path.exists(configuration):
-    with open(configuration, 'r') as f:
-        CONFIG = json.load(f)
+configuration = dotenv_values(os.path.expandvars("$HOME") + '/.config/.env')
+if configuration:
+    FOLDER = os.getcwd().replace(
+        configuration.get('CSE_LOCAL_PATH'),
+        '') if configuration.get('CSE_LOCAL_PATH') else None
+    CSE = configuration.get('CSE_PATH') if configuration.get(
+        'CSE_PATH') else None
+    IN_CSE_FOLDER: bool = os.getcwd() != FOLDER
+    if not (FOLDER):
+        sys.exit("%s: CSE_LOCAL_PATH missing from .env" %
+                 (os.path.basename(sys.argv[0])))
+    if not (CSE):
+        sys.exit("%s: CSE_PATH missing from .env" %
+                 (os.path.basename(sys.argv[0])))
 else:
-    print('missing configuration')
-    sys.exit(0)
-# define globals
-# CSE: str = cse_credentials()[0]
-CSE = CONFIG['path']
-FOLDER: str = os.getcwd().replace(CONFIG['local_path'], '')
-IN_CSE_FOLDER: bool = os.getcwd() != FOLDER
+    sys.exit("%s: .env configuration file is required." %
+             (os.path.basename(sys.argv[0])))
+
 TIMEOUT: int = 5
-DATEFRMT: str = '%d %B %Y %H:%M:%S'
 
 
 def main() -> None:

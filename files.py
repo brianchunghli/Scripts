@@ -4,37 +4,29 @@
 file factory for c/c++, python, shell, make and cmake files.
 """
 
+import os
+import sys
+
+try:
+    from dotenv import dotenv_values
+except ImportError:
+    sys.exit("%s: the dotenv package is required." %
+             (os.path.basename(sys.argv[0])))
+
 import argparse
 import json
-import os
 import subprocess
-import sys
-from typing import Tuple
 
-COLORS: dict = {
-    'r': '[38;5;1m',
-    'g': '[38;5;2m',
-    'y': '[38;5;11m',
-}
-
-
-def color_print(msg: str, color='g', **kwargs) -> None:
-    """Color print a message."""
-    start = COLORS.get(color, '[0;0m')
-    print(f'\033{start}{msg}\033[0;0m', **kwargs)
-
-
-def prog_print(msg: str, **kwargs) -> None:
-    """Program print a message."""
-    print(f'{os.path.basename(sys.argv[0])}: {msg}', **kwargs)
+from helper import color_print, prog_print
 
 
 def parse_arguments() -> dict:
-    """Parse command line arguments."""
+    """Command line arguments parser"""
     parser = argparse.ArgumentParser(
         allow_abbrev=False,
         exit_on_error=True,
-        description="Basic file factory.",
+        description=
+        "Basic file factory for c/c++, python, shell, make and cmake files",
     )
     subp = parser.add_subparsers(dest='filetype',
                                  title='subcommands',
@@ -78,7 +70,7 @@ def parse_arguments() -> dict:
     cmake.add_argument('-t',
                        '--tests',
                        action='store_true',
-                       help='allow for testing')
+                       help='add testing features for cmake project')
     # c/cpp files
     c_flags = argparse.ArgumentParser(add_help=False)
     c_flags.add_argument('-m',
@@ -107,67 +99,62 @@ def parse_arguments() -> dict:
                     help='file generator for zsh files')
 
     return vars(parser.parse_args())
-# re-factor into:
-#   ** basic check
-#   ** cmake / make file check
-#   ** c++ file check
-def check_args(args: dict) -> Tuple[bool, str]:
+
+
+def basic_check(args: dict):
     """Check validity of arguments."""
     success = True
     err_message = ''
-    filetype, filename = args['filetype'], args['file_name'][0]
-    has_suffix = filename.split('.')
+    file_t, file_n = args['filetype'], args['file_name'][0]
+    has_suffix = file_n.split('.')
+    # disallow suffixes in file creation
+    if len(has_suffix) == 2 and file_t not in ('cmake', 'make'):
+        err_message = f'extraneous suffix \'{has_suffix[1]}\''
+        success = False
+    # configuration must exist
     try:
-        if len(has_suffix) == 2 and filetype not in ('cmake', 'make'):
-            err_message = f'extraneous suffix \'{has_suffix[1]}\''
-            success = False
-        elif not CONFIG[filetype]:
-            err_message = f'no configuration found for \'{filetype}\''
-            success = False
-        elif filetype == 'cmake' or filetype == 'make':
-            suffix = filename.split('.')
-            if len(suffix) != 2:
-                success = False
-                err_message = f'invalid file \'{filename}\''
-                return success, err_message
-            if suffix[1] != 'cpp' and suffix[1] != 'c' and success:
-                success = False
-                err_message = f'invalid file \'{filename}\''
-            if not os.path.exists(os.getcwd() + f'/{filename}') and success:
-                success = False
-                err_message = f'\'{filename}\' cannot be found in current directory'
-            if suffix[1] == 'c' and args['tests'] and success:
-                success = False
-                err_message = 'catch2 cannot be run with c files'
-            if args['standard']:
-                subtype = filename.split('.')[1]
-                if subtype == 'cpp':
-                    if args['standard'][0] not in ('11', '17', '20'):
-                        success = False
-                        err_message =\
-                            f'\'{args["standard"][0]}\'' +\
-                        f' is not a valid standard for {subtype}.'
-                elif args['standard'][0] not in ('99'):
-                    success = False
-                    err_message =\
-                        f'\'{args["standard"][0]}\' is not a valid standard for c.'
+        CONFIG[file_t]
     except KeyError:
         success = False
-        err_message = f'no configuration found for \'{filetype}\''
+        err_message = f'no configuration found for \'{file_t}\''
+    # file must exist for cmake / make
+    if not os.path.exists(os.getcwd() + f'/{file_n}') and file_t in ('cmake',
+                                                                     'make'):
+        success = False
+        err_message = f'\'{file_n}\' not found in current directory'
     return success, err_message
 
 
 def cmake_factory(args: dict, file_content: dict) -> str:
     """Generate a cmake file."""
+    contents = ''
+    file_n = args['file_name'][0]
+    if (len(file_n.split('.')) != 2):
+        prog_print(f'invalid file \'{file_n}\'')
+        return contents
+    if (os.path.exists(os.getcwd() + '/src')):
+        prog_print(
+            'existing cmake project exists. Remove all files before continuing.',
+        )
+        return contents
+
     filename, suffix = args['file_name'][0].split('.')
+
+    if suffix not in ('c', 'cpp'):
+        prog_print(f'invalid file \'{file_n}\'')
+        return contents
+
     contents = ''.join(file_content['cmake']['p1'])
+
     if args['tests']:
         contents = contents.replace('add_executable(main $FILENAME.$SUFFIX)',
                                     ''.join(file_content['cmake']['tests']))
     contents = contents.replace('$FILENAME',
-                                filename).replace('$SUFFIX', suffix)
-    if args['standard']:
-        contents = contents.replace('c++20', 'c++' + args['standard'])
+                                f'src/{filename}').replace('$SUFFIX', suffix)
+
+    if suffix == 'cpp' and args['standard']:
+        contents = contents.replace('c++20', f"c++{args['standard']}")
+
     if suffix == 'c':
         contents = contents.replace('set(CMAKE_CXX_STANDARD 20)',
                                     'set(CMAKE_CXX_STANDARD 99)')
@@ -179,115 +166,121 @@ def cmake_factory(args: dict, file_content: dict) -> str:
 def generate_file(args: dict, file_content: dict) -> str:
     """Generate the file contents for the file."""
     contents: str = ''
-    success, message = check_args(args)
-
+    success, message = basic_check(args)
     if not success:
         prog_print(message)
         return contents
-    file_t = args['filetype']
-    if file_t == 'py':
-        contents = ''.join(file_content['py']['p1'])
-    if file_t == 'c' or file_t == 'cpp':
-        if file_t == 'c':
-            c = file_content['c']
-            contents = ''.join(c['p1'])
-            if args['main']:
-                contents = ''.join(c['p2'])
-        else:
-            cpp = file_content['cpp']
-            contents = ''.join(cpp['p1'])
-            if args['competitive']:
-                contents = "".join(cpp["p2.m"]) if args["main"] else "".join(
-                    cpp["p2"])
-            elif args['main']:
-                contents = ''.join(cpp['p1.m'])
-    if file_t == 'sh' or file_t == 'zsh':
-        contents = file_content[file_t]['p1']
-    if file_t == 'make':
-        # not yet implemented
-        # flags
-        filename, suffix = args['file_name'][0].split('.')
-        contents = ''.join(file_content['make'][f'p1.{suffix}'])
-        contents = contents.replace('$FILENAME',
-                                    filename).replace('$SUFFIX', suffix)
-        if args['standard']:
-            contents = contents.replace('c++20', f'c++{args["standard"][0]}')
 
-    if file_t == 'cmake':
-        contents = cmake_factory(args, file_content)
+    try:
+        file_t = args['filetype']
+
+        if file_t == 'py':
+            contents = ''.join(file_content['py']['p1'])
+
+        if file_t == 'c' or file_t == 'cpp':
+            if file_t == 'c':
+                c = file_content['c']
+                contents = ''.join(c['p1'])
+                if args['main']:
+                    contents = ''.join(c['p2'])
+            else:
+                cpp = file_content['cpp']
+                contents = ''.join(cpp['p1'])
+                if args['competitive']:
+                    contents = "".join(
+                        cpp["p2.m"]) if args["main"] else "".join(cpp["p2"])
+                elif args['main']:
+                    contents = ''.join(cpp['p1.m'])
+
+        if file_t == 'sh' or file_t == 'zsh':
+            contents = file_content[file_t]['p1']
+
+        if file_t == 'make':
+            filename, suffix = args['file_name'][0].split('.')
+            contents = ''.join(file_content['make'][f'p1.{suffix}'])
+            contents = contents.replace('$FILENAME',
+                                        filename).replace('$SUFFIX', suffix)
+            if args['standard']:
+                contents = contents.replace('c++20',
+                                            f'c++{args["standard"][0]}')
+
+        if file_t == 'cmake':
+            contents = cmake_factory(args, file_content)
+    except KeyError:
+        prog_print(f'missing template for {file_t}')
+        contents = ''
+
     return contents
 
 
+CONFIG = {}
 dir_path = os.getcwd().split('/')
 path_length = len(dir_path)
-configuration_found = False
-while path_length > 1:
+if os.path.exists(os.path.expandvars("$HOME") + '/.config/files/files.json'):
+    configuration_found = True
+    with open(os.path.expandvars("$HOME") + '/.config/files/files.json') as f:
+        CONFIG = json.load(f)
+while path_length > 2 and not CONFIG:
     curr_files = os.listdir('/'.join(dir_path))
     if 'src' in curr_files:
-        config_local = '/'.join(dir_path) + '/src/.files'
+        config_local = '/'.join(dir_path) + '/src/.files.json'
         if os.path.exists(config_local):
             configuration_found = True
             with open(config_local) as f:
                 CONFIG = json.load(f)
-    elif '.config' in curr_files:
-        config_global = '/'.join(dir_path) + '/.config/.files'
-        if os.path.exists(config_global):
-            configuration_found = True
-            with open(config_global) as f:
-                CONFIG = json.load(f)
     dir_path.pop(-1)
     path_length = len(dir_path)
-if not configuration_found:
-    prog_print("missing configuration file")
-    sys.exit(0)
+
+load_env = dotenv_values(f'{os.path.expandvars("$HOME")}/.config/files/.files')
+CATCH2_FOLDER = load_env['CATCH2_PATH'] if load_env else None
+if not (CONFIG and CATCH2_FOLDER):
+    sys.exit("%s: missing configuration file" %
+             (os.path.basename(sys.argv[0])))
+
+NAME_CONVERSIONS = {
+    "cmake": "CMakeLists.txt",
+    "make": "Makefile",
+}
 
 
 def main() -> None:
     opts = parse_arguments()
-    if not configuration_found and not opts['path']:
-        prog_print("missing configuration file")
-        return
-    if opts['path']:
-        print()
     if opts['debug']:
         color_print('Provided arguments:')
         for arg in opts:
             print(f'{arg}:', opts[arg])
     file_contents = generate_file(opts, CONFIG)
-    new_file, suffix = opts['file_name'][0], opts['filetype']
+
     if not file_contents:
         return
-    filename = f"{new_file}.{suffix}"
-    message = f'File exists. Replace {os.path.basename(filename)}? '
+
+    new_file, suffix = opts['file_name'][0], opts['filetype']
+    file_n = f"{new_file}.{suffix}"
+    message = f'File exists. Replace {os.path.basename(file_n)}? '
+
     if os.path.exists(
-            os.path.abspath(filename)) and input(message) not in ('yes', 'y',
-                                                                  'Yes'):
+            os.path.abspath(file_n)) and input(message) not in ('yes', 'y',
+                                                                'Yes'):
         print("file creation aborted")
         return
-    name_conversion = {
-        "cmake": "CMakeLists.txt",
-        "make": "Makefile",
-    }
-    if suffix == 'cmake' or suffix == 'make':
-        filename = name_conversion.get(suffix)
+    filename = NAME_CONVERSIONS.get(suffix) if NAME_CONVERSIONS.get(
+        suffix) else file_n
+
     with open(filename, "w") as w:
         w.write(file_contents)
+
     if suffix in ["zsh", "sh", "py"]:
+        # allow the file to be executable
         subprocess.run(["chmod", "+x", filename])
+
     if suffix == 'cmake':
-        build_folder = False
-        build_test = False
-        if not os.path.exists(os.getcwd() + 'r/build'):
-            subprocess.run(['mkdir', 'build'], capture_output=True)
-            build_folder = True
+        subprocess.run(['mkdir', 'build'])
+        subprocess.run(['mkdir', 'src'])
+        os.rename(os.getcwd() + f'/{new_file}',
+                  os.getcwd() + f'/src/{new_file}')
         if opts['tests']:
-            build_tests = True
             if not os.path.exists(os.getcwd() + '/lib'):
-                subprocess.run(['cp', '-r', CONFIG['catch2'], '.'])
-            if not os.path.exists(os.getcwd() + '/src'):
-                subprocess.run(['mkdir', 'src'])
-            os.rename(os.getcwd() + f'/{new_file}',
-                      os.getcwd() + f'/src/{new_file}')
+                subprocess.run(['cp', '-r', CATCH2_FOLDER, '.'])
             fname, fsuffix = new_file.split('.')
             testfile = new_file.replace(fsuffix, f'test.{fsuffix}')
             with open(os.getcwd() + f'/src/{testfile}', 'a') as f:
@@ -300,6 +293,7 @@ def main() -> None:
                     'w') as f:
                 pass
         subprocess.run(['cmake', '-S', '.', '-B', 'build/'])
+
     print(f"{filename} created.")
 
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PDF utility.
 
-A python script for merging pdf files using pypdf 
+A python script for merging pdf files using pypdf
 
 """
 
@@ -9,15 +9,17 @@ import argparse
 import os
 import subprocess
 
-from pypdf import PdfMerger, PdfReader, PdfWriter, errors
+try:
+    from pypdf import PdfMerger, PdfReader, PdfWriter, errors
+except ImportError:
+    import sys
+    sys.exit("%s: pypdf module required." % (os.path.basename(sys.argv[0])))
 
-def error_print(msg: str) -> None:
-    print(f'{os.path.basename(__file__)}: {msg}')
-
+from helper import prog_print
 
 def parse_args() -> None:
     parser = argparse.ArgumentParser(
-        description='A utility function for merging and cutting pdfs')
+        description='A utility program for merging and slicing pdfs')
     # universal options to be inherited by subparsers
     options = argparse.ArgumentParser(add_help=False)
     options.add_argument('-n',
@@ -52,7 +54,7 @@ def files_exist(files: list) -> bool:
     for f in files:
         pdf_file = f'{os.getcwd()}/{f}'
         if not (os.path.exists(pdf_file)):
-            error_print(f'\'{f}\' is not found in the current directory.')
+            prog_print(f'\'{f}\' is not found in the current directory.')
             return False
     return True
 
@@ -64,7 +66,7 @@ def cut(file: str, pos: list, **kwargs):
         try:
             reader = PdfReader(f, strict=True)
         except errors.PdfReadError as exc:
-            error_print(f'\'{file}\' is not a pdf.')
+            prog_print(f'\'{file}\' is not a pdf.')
             return
         # invalid number of pages
         if not pos or len(pos) > 2:
@@ -96,7 +98,7 @@ def merge(files: list, **kwargs) -> None:
             with open(os.path.join(os.getcwd(), file), 'rb') as f:
                 pdf_merger.append(f)
         except errors.PdfReadError as e:
-            error_print(f'invalid file provided: \'{file}\'')
+            prog_print(f'invalid file provided: \'{file}\'')
     # custom name
     filename = 'merged.pdf' if not kwargs.get(
         'name') else f'{kwargs.get("name")}.pdf'
@@ -119,6 +121,7 @@ def main() -> None:
 
     if args.subcommand == 'cut':
         args.func(args.files[0], args.positions, name=args.name[0])
-#
+
+
 if __name__ == '__main__':
     main()
