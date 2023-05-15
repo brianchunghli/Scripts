@@ -232,9 +232,9 @@ def main() -> None:
             lambda a: a not in ('func', 'debug', 'subcommand'), _.keys()))
         if args.subcommand == 'sync' or args.subcommand == 'run':
             if args.debug:
-                color_print("==> Debugging information: ")
+                color_print("  ==> Debugging information: ")
                 for k, it in vars(args).items():
-                    print(f'{k}:', it)
+                    print(f'  {k}:', it)
             args.func(*flags)
         else:
             subprocess.run(['cse', '-h'])
