@@ -3,6 +3,10 @@
 
 A python script for merging pdf files using pypdf
 
+TODO:
+  [ ] Add file sorting based on time of creation
+  [ ] Add file sorting based on length of documents
+
 """
 
 import argparse
@@ -16,6 +20,7 @@ except ImportError:
     sys.exit("%s: pypdf module required." % (os.path.basename(sys.argv[0])))
 
 from helper import prog_print
+
 
 def parse_args() -> None:
     parser = argparse.ArgumentParser(
@@ -49,24 +54,30 @@ def parse_args() -> None:
     return parser.parse_args()
 
 
-def files_exist(files: list) -> bool:
+def all_files_exist(files: list) -> bool:
     """File validation."""
+    all_exist = True
     for f in files:
         pdf_file = f'{os.getcwd()}/{f}'
         if not (os.path.exists(pdf_file)):
             prog_print(f'\'{f}\' is not found in the current directory.')
-            return False
-    return True
+            all_exist = False
+    return all_exist
 
 
 def cut(file: str, pos: list, **kwargs):
     """Pdf cut functionality."""
+
+    if not os.path.isfile(os.path.join(os.getcwd(), file)):
+        prog_print(f'\'{file}\' is not a file.')
+        return
+
     new_file = PdfWriter()
     with open(file, 'rb') as f:
         try:
             reader = PdfReader(f, strict=True)
         except errors.PdfReadError as exc:
-            prog_print(f'\'{file}\' is not a pdf.')
+            prog_print(f'\'{file}\' is not a pdf file.')
             return
         # invalid number of pages
         if not pos or len(pos) > 2:
@@ -92,13 +103,14 @@ def cut(file: str, pos: list, **kwargs):
 def merge(files: list, **kwargs) -> None:
     """Pdf merge functionality."""
     pdf_merger = PdfMerger(strict=True)
-    print(files, kwargs)
     for file in files:
+        if not os.path.isfile(os.path.join(os.getcwd(), file)):
+            continue
         try:
             with open(os.path.join(os.getcwd(), file), 'rb') as f:
                 pdf_merger.append(f)
         except errors.PdfReadError as e:
-            prog_print(f'invalid file provided: \'{file}\'')
+            prog_print(f'omitted file provided: \'{file}\'')
     # custom name
     filename = 'merged.pdf' if not kwargs.get(
         'name') else f'{kwargs.get("name")}.pdf'
@@ -113,7 +125,12 @@ def main() -> None:
         return
     # no merging for less than two files
     # check that files exist
-    if not files_exist(args.files):
+
+    if not all_files_exist(args.files):
+        return
+
+    if not args.files:
+        prog_print('no files provided.')
         return
 
     if args.subcommand == 'merge':
