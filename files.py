@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Basic file factory.
+"""Basic file generator.
 
 file factory for c/c++, python, shell, make and cmake files.
 """
@@ -234,7 +234,7 @@ while path_length > 2 and not CONFIG:
 load_env = dotenv_values(f'{os.path.expandvars("$HOME")}/.config/files/.files')
 CATCH2_FOLDER = load_env['CATCH2_PATH'] if load_env else None
 if not (CONFIG and CATCH2_FOLDER):
-    sys.exit("%s: missing configuration file" %
+    sys.exit("%s: missing configuration file parameters" %
              (os.path.basename(sys.argv[0])))
 
 NAME_CONVERSIONS = {
@@ -256,11 +256,9 @@ def main() -> None:
 
     new_file, suffix = opts['file_name'][0], opts['filetype']
     file_n = f"{new_file}.{suffix}"
-    message = f'File exists. Replace {os.path.basename(file_n)}? '
-
-    if os.path.exists(
-            os.path.abspath(file_n)) and input(message) not in ('yes', 'y',
-                                                                'Yes'):
+    if os.path.exists(os.path.abspath(file_n)) and input(
+            f'File exists. Replace {os.path.basename(file_n)}? ') not in (
+                'yes', 'y', 'Yes'):
         print("file creation aborted")
         return
     filename = NAME_CONVERSIONS.get(suffix) if NAME_CONVERSIONS.get(
