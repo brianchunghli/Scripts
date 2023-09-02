@@ -147,7 +147,7 @@ def cmake_factory(args: dict, file_content: dict) -> str:
     contents = ''.join(file_content['cmake']['p1'])
 
     if args['tests']:
-        contents = contents.replace('add_executable(main $FILENAME.$SUFFIX)',
+        contents = contents.replace('add_executable(main ${SRC_FILES})',
                                     ''.join(file_content['cmake']['tests']))
     contents = contents.replace('$FILENAME',
                                 f'src/{filename}').replace('$SUFFIX', suffix)
@@ -164,7 +164,7 @@ def cmake_factory(args: dict, file_content: dict) -> str:
 
 
 def generate_file(args: dict, file_content: dict) -> str:
-    """Generate the file contents for the file."""
+    """Generate the file contents to be written."""
     contents: str = ''
     success, message = basic_check(args)
     if not success:
@@ -272,13 +272,23 @@ def main() -> None:
         subprocess.run(["chmod", "+x", filename])
 
     if suffix == 'cmake':
+        # create required folders
         subprocess.run(['mkdir', 'build'])
         subprocess.run(['mkdir', 'src'])
+        subprocess.run(['mkdir', 'include'])
+
+        # move file to the src folder
         os.rename(os.getcwd() + f'/{new_file}',
                   os.getcwd() + f'/src/{new_file}')
+
+        # set up testing functionality
         if opts['tests']:
             if not os.path.exists(os.getcwd() + '/lib'):
-                subprocess.run(['cp', '-r', CATCH2_FOLDER, '.'])
+                # copy folder into cwd and filter out git related files
+                subprocess.run([
+                    'rsync', '-rv', '-f- .git', '-f- README.md', CATCH2_FOLDER,
+                    '.'
+                ])
             fname, fsuffix = new_file.split('.')
             testfile = new_file.replace(fsuffix, f'test.{fsuffix}')
             with open(os.getcwd() + f'/src/{testfile}', 'a') as f:
@@ -286,10 +296,9 @@ def main() -> None:
                       file=f)
                 print('#include "catch2/catch.hpp"', file=f)
                 print(file=f)
-            with open(
-                    os.getcwd() + f'/src/{fname}.{fsuffix.replace("c", "h")}',
-                    'w') as f:
-                pass
+            open(  # noqa: SIM115
+                os.getcwd() + f'/include/{fname}.{fsuffix.replace("c", "h")}',
+                'x')
         subprocess.run(['cmake', '-S', '.', '-B', 'build/'])
 
     print(f"{filename} created.")
