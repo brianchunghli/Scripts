@@ -7,6 +7,8 @@ import json
 import os
 import subprocess
 import sys
+import regex as re
+import time
 
 from helper import DATEFRMT, color_print, header_print, prog_print
 
@@ -29,8 +31,7 @@ def parse_args() -> None:
                               '--copy',
                               action='store_true',
                               help='copy output to a "cse.out" file')
-    parent_flags.add_argument('-d',
-                              '--debug',
+    parent_flags.add_argument('--debug',
                               action='store_true',
                               help=argparse.SUPPRESS)
 
@@ -53,12 +54,13 @@ def parse_args() -> None:
 
     sync_parse = argparse.ArgumentParser(add_help=False)
     group_sync = sync_parse.add_mutually_exclusive_group()
-    group_sync.add_argument('-f',
+    group_sync.add_argument(
+        '-f',
+        action='store_true',
+        help='force from local environment to cse environment')
+    group_sync.add_argument('-d',
                             action='store_true',
-                            help='force update to cse folder')
-    group_sync.add_argument('-u',
-                            action='store_true',
-                            help='sync cse folder with local')
+                            help='sync from cse to local environment')
 
     subp = parser.add_subparsers(dest='subcommand', help=False)
     run = subp.add_parser('run',
@@ -66,9 +68,10 @@ def parse_args() -> None:
                           help='run a cse command')
     run.set_defaults(func=cse_run)
     sync_parse.add_argument('positional_args', nargs='*')
-    sync = subp.add_parser('sync',
-                           parents=[parent_flags, sync_parse],
-                           help='sync a folder with cse')
+    sync = subp.add_parser(
+        'sync',
+        parents=[parent_flags, sync_parse],
+        help='sync files or directories between local and cse environment')
     sync.set_defaults(func=cse_sync)
 
     return parser.parse_args()
@@ -87,86 +90,145 @@ def output_file(*args: tuple) -> None:
         print(time, file=f)
         for _ in args:
             print(_, file=f)
-    print('output saved to \'cse.out\'')
+    print('  output saved to \'cse.out\'')
 
 
-def cse_execute(line: str) -> str:
+def execute_and_stream(command: list) -> str:
+    response = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        encoding='utf-8',
+    )
+    start_time = time.time()
+    output = ""
+    while response.stdout.readable():
+        if time.time() - start_time >= TIMEOUT:
+            output = "request timed out"
+            response.kill()
+            break
+        line = response.stdout.readline()
+        output += line
+        if not line:
+            break
+        print(' ', line.strip())
+    print()
+    return output, response.returncode == 0
+
+
+def cse_execute(line: str):
     """Execute cse server commands."""
+    header_print(line)
     if IN_CSE_FOLDER and FOLDER:
-        line = ['ssh', 'cse', f'COMP; cd {FOLDER}; ' + line]
+        line = ['ssh', 'cse', f'COMP; cd {FOLDER.lstrip("/")}; ' + line]
     else:
         line = ['ssh', 'cse', f'COMP; {line}']
-    try:
-        response = subprocess.run(line,
-                                  capture_output=True,
-                                  encoding='utf-8',
-                                  timeout=TIMEOUT)
-        message = response.stdout
-        if not message:
-            message = response.stderr
-    except subprocess.TimeoutExpired:
-        message = "timed out"
-    return message
+    output, success = execute_and_stream(line)
+    return output, success
 
 
-def cse_run(*args) -> None:
+def cse_run(args) -> None:
     flagc, flaga, flags, pos_args = args
     if not pos_args and not flaga and not flags:
         prog_print('no arguments provided')
         return
     if flaga:
         prompt = f'{flaga[0]} autotest {flaga[1]}'
-        output = cse_execute(f'COMP; cd {FOLDER}; ' + prompt)
+        output, success = cse_execute(prompt)
         if flagc:
             output_file(prompt, output)
             return
-        header_print(prompt)
-        display_output(output)
         print("  use 'cse sync' to ensure the latest file(s) " +
               "are uploaded to the cse servers.")
     elif flags:
         if not pos_args:
-            prog_print('expected arguments [ list ... <class>]')
+            prog_print('expected arguments [ list ... <class> ]')
             return
         output = ''
         for c in pos_args:
-            response = cse_execute(f'{c} classrun -sturec')
+            response, success = cse_execute(f'{c} classrun -sturec')
             if flagc:
                 output = output + '\n' + response
                 continue
-            header_print(f'{c} classrun -sturec')
-            display_output(response)
         if flagc:
             output_file()
             with open('cse.out', 'a') as f:
                 print(output, f)
     else:
-        header_print(' '.join(pos_args))
-        output = cse_execute(' '.join(pos_args))
-        display_output(output)
+        output, success = cse_execute(' '.join(pos_args))
         if flagc:
             output_file(output)
 
 
-def cse_sync(*args) -> None:
-    flagc, flagf, flagu, pos_args = args
-    if flagu:  # syncs cse ==> local
-        for course in pos_args:
-            local_path = f"{configuration.get('LOCAL_PATH')}/"
-            if os.path.exists(local_path):
-                response = subprocess.run([
-                    "rsync",
-                    "-ai",
-                    f"{configuration.get('CSE_LOCAL_PATH')}/{course}",
-                    local_path,
-                ],
-                                          capture_output=True,
-                                          encoding="utf-8")
-                print(response.stdout)
+def is_directory(files, filename):
+    """Filters the the output of ls -al from subprocess to check for 
+       whether the specified file is a directory"""
+    is_directory = False
+    for f in files:
+        line = f.split()
+        if line[0][0] == 'd' and line[-1] == filename:
+            is_directory = True
+    return is_directory
+
+
+def exists(files, filename):
+    """Checks the output of ls -al from subprocess to see if a file matching
+       the filename is found"""
+    exists = False
+    for f in files:
+        if f.split()[-1] == filename:
+            exists = True
+    return exists
+
+
+def cse_sync(args) -> None:
+    flagc, flagf, flagd, pos_args = args
+
+    if flagd:  # syncs a cse file or directory ==> local
+        cwd = os.getcwd().replace(
+            os.path.expandvars('$HOME') + '/unsw/cse', '')
+        for item in pos_args:
+            base_path = configuration.get('CSE_LOCAL_PATH')
+            course_path = f"{base_path}{cwd}/{item}"
+            cse_course_path = f"{configuration.get('CSE_PATH')}{cwd}/{item}"
+
+            # check if directory
+            dir_files = list(
+                filter(lambda x: x != '',
+                       cse_execute('ls -al')[0].split('\n')))
+
+            # rsync will otherwise sync the directory as a sub directory
+            if is_directory(dir_files, item):
+                cse_course_path += "/"
+                course_path += "/"
+
+            command = [
+                "rsync",
+                "-ani",
+                cse_course_path,
+                course_path,
+            ]
+            response = subprocess.run(command,
+                                      capture_output=True,
+                                      encoding='utf-8').stdout
+            if response:
+                color_print(
+                    f'==> downloading \'{item}\' from cse to local computer:')
+                display_output(response)
+                if not flagf and input('==> process? ') in ('yes', 'y', 'Yes'):
+                    command = [
+                        "rsync",
+                        "-avi",
+                        cse_course_path,
+                        course_path,
+                    ]
+                    response, success = execute_and_stream(command)
             else:
-                prog_print(f"'{course}' does not exist on local")
+                prog_print(f'no changes to \'{item}\'.' if exists(
+                    dir_files, item) else f'\'{item}\' does not exist.')
         return
-    for f in pos_args:  # syncs local ==> cse
+
+    for f in pos_args:  # syncs a local file or directory ==> cse
         if not os.path.exists(os.getcwd() + r'/' + f):
             prog_print(f"'{f}' not found in current directory.")
             continue
@@ -175,29 +237,30 @@ def cse_sync(*args) -> None:
         cse_path = CSE + cwd
         if os.path.isfile(f):
             cse_path = cse_path + f'/{f}'
-        response = subprocess.run(['rsync', '-acin', f, cse_path],
+
+        command = ['rsync', '-acin', f, cse_path]
+        response = subprocess.run(command,
                                   capture_output=True,
                                   encoding='utf-8').stdout
         if response:
-            color_print(f'==> uploading \'{f}\'')
+            color_print(f'==> uploading \'{f}\' from local computer to cse:')
             display_output(response)
             response = ''
+            success = 1
             process = False
             if not flagf and input('==> process? ') in ('yes', 'y', 'Yes'):
                 process = True
-                response = subprocess.run(['rsync', '-aciv', f, cse_path],
-                                          capture_output=True,
-                                          encoding='utf-8').stdout
+                color_print(f'==> uploading \'{f}\'')
+                response, success = execute_and_stream(
+                    ['rsync', '-aciv', f, cse_path])
             if flagf:
                 process = True
-                response = subprocess.run(['rsync', '-aciv', f, cse_path],
-                                          capture_output=True,
-                                          encoding='utf-8').stdout
-            if process and response:
                 color_print(f'==> uploading \'{f}\'')
-                display_output(response)
-                if process and not response:
-                    color_print(f'==> {f} is up to date')
+                response, success = execute_and_stream(
+                    ['rsync', '-aciv', "--exclude 'target'", f, cse_path])
+
+            if success != 0 and process:
+                color_print(f'==> {f} is up to date')
 
         else:
             print(f'no changes to \'{f}\'')
@@ -205,15 +268,16 @@ def cse_sync(*args) -> None:
 
 configuration = dotenv_values(os.path.expandvars("$HOME") + '/.config/.env')
 if configuration:
+
+    if not (configuration.get('CSE_LOCAL_PATH')):
+        sys.exit("%s: CSE_LOCAL_PATH missing from .env" %
+                 (os.path.basename(sys.argv[0])))
     FOLDER = os.getcwd().replace(
         configuration.get('CSE_LOCAL_PATH'),
         '') if configuration.get('CSE_LOCAL_PATH') else None
     CSE = configuration.get('CSE_PATH') if configuration.get(
         'CSE_PATH') else None
     IN_CSE_FOLDER: bool = os.getcwd() != FOLDER
-    if not (FOLDER):
-        sys.exit("%s: CSE_LOCAL_PATH missing from .env" %
-                 (os.path.basename(sys.argv[0])))
     if not (CSE):
         sys.exit("%s: CSE_PATH missing from .env" %
                  (os.path.basename(sys.argv[0])))
@@ -221,7 +285,7 @@ else:
     sys.exit("%s: .env configuration file is required." %
              (os.path.basename(sys.argv[0])))
 
-TIMEOUT: int = 5
+TIMEOUT: int = 60
 
 
 def main() -> None:
@@ -230,14 +294,11 @@ def main() -> None:
         _ = vars(args)
         flags = (_[k] for k in filter(
             lambda a: a not in ('func', 'debug', 'subcommand'), _.keys()))
-        if args.subcommand == 'sync' or args.subcommand == 'run':
-            if args.debug:
-                color_print("  ==> Debugging information: ")
-                for k, it in vars(args).items():
-                    print(f'  {k}:', it)
-            args.func(*flags)
-        else:
-            subprocess.run(['cse', '-h'])
+        if args.debug:
+            color_print("  ==> Debugging information: ")
+            for k, it in vars(args).items():
+                print(f'  {k}:', it)
+        args.func(flags)
     except KeyboardInterrupt:
         pass
 
