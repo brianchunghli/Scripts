@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Basic script to interact with cse servers."""
+"""
+Basic script to interact with cse servers.
+
+relies on the use of a set ssh key to interact with
+the cse servers.
+"""
 
 import argparse
 import datetime
@@ -96,7 +101,7 @@ def output_file(*args: tuple) -> None:
     print("  output saved to 'cse.out'")
 
 
-def execute_and_stream(command: list) -> str:
+def execute_and_stream(command: list, streaming: bool) -> str:
     response = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -115,32 +120,10 @@ def execute_and_stream(command: list) -> str:
             output += line
             if not line:
                 break
-            print(" ", line.strip())
+            if streaming:
+                print(" ", line.strip())
             start_time = time.time()
     print()
-    return output, response.returncode == 0
-
-
-def execute_no_stream(command: list) -> str:
-    response = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        encoding="utf-8",
-    )
-    start_time = time.time()
-    output = ""
-    while True:
-        if time.time() - start_time >= TIMEOUT:
-            output = "request timed out"
-            response.kill()
-            break
-        if response.stdout.readable():
-            line = response.stdout.readline()
-            output += line
-            if not line:
-                break
-            start_time = time.time()
     return output, response.returncode == 0
 
 
@@ -148,11 +131,12 @@ def cse_execute(line: str, output=True):
     """Execute cse server commands."""
     if output:
         header_print(line)
-    if IN_CSE_FOLDER and FOLDER:
-        line = ["ssh", "cse", f'COMP; cd {FOLDER.lstrip("/")}; ' + line]
-    else:
-        line = ["ssh", "cse", f"COMP; {line}"]
-    output, success = execute_and_stream(line) if output else execute_no_stream(line)
+    line = (
+        ["ssh", "cse", f'COMP; cd {FOLDER.lstrip("/")}; ' + line]
+        if IN_CSE_FOLDER and FOLDER
+        else ["ssh", "cse", f"COMP; {line}"]
+    )
+    output, success = execute_and_stream(line, output)
     return output, success
 
 
