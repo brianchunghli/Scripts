@@ -25,21 +25,10 @@ except ImportError:
 def parse_args() -> None:
     """Command line argument parser."""
 
-    parser = argparse.ArgumentParser(
-        allow_abbrev=False,
-        exit_on_error=True,
-        description="Utility to interact with cse servers",
-    )
-
-    parent_flags = argparse.ArgumentParser(add_help=False)
-    parent_flags.add_argument(
-        "-c", "--copy", action="store_true", help='copy output to a "cse.out" file'
-    )
-    parent_flags.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
-
-    run_parse = argparse.ArgumentParser(add_help=False)
-    group_run = run_parse.add_mutually_exclusive_group()
-    group_run.add_argument(
+    cse_run_parser = argparse.ArgumentParser(add_help=False)
+    cse_run_parser.add_argument("positional_args", nargs="*")
+    cse_run_parser_subcommands = cse_run_parser.add_mutually_exclusive_group()
+    cse_run_parser_subcommands.add_argument(
         "-a",
         nargs=2,
         metavar=(
@@ -48,41 +37,56 @@ def parse_args() -> None:
         ),
         help="run autotest",
     )
-
-    group_run.add_argument(
+    cse_run_parser_subcommands.add_argument(
         "-s",
         action="store_true",
         help="request student record",
     )
-    run_parse.add_argument("positional_args", nargs="*")
 
-    sync_parse = argparse.ArgumentParser(add_help=False)
-    group_sync = sync_parse.add_mutually_exclusive_group()
-    group_sync.add_argument(
+    cse_sync_parser = argparse.ArgumentParser(add_help=False)
+    cse_sync_parser.add_argument("positional_args", nargs="*")
+    cse_sync_parser_subcommands = cse_sync_parser.add_mutually_exclusive_group()
+    cse_sync_parser_subcommands.add_argument(
         "-f",
         action="store_true",
         help="force from local environment to cse environment",
     )
-    group_sync.add_argument(
+    cse_sync_parser_subcommands.add_argument(
         "-d",
         action="store_true",
         help="sync from cse to local environment",
     )
 
-    subp = parser.add_subparsers(dest="subcommand", help=False)
-    run = subp.add_parser(
-        "run", parents=[parent_flags, run_parse], help="run a cse command"
+    parent_parser = argparse.ArgumentParser(
+        allow_abbrev=False,
+        exit_on_error=True,
+        description="Utility to interact with cse servers",
     )
-    run.set_defaults(func=cse_run)
-    sync_parse.add_argument("positional_args", nargs="*")
-    sync = subp.add_parser(
+    parent_parser_flags = argparse.ArgumentParser(add_help=False)
+
+    parent_parser_flags.add_argument(
+        "-c", "--copy", action="store_true", help='copy output to a "cse.out" file'
+    )
+    parent_parser_flags.add_argument(
+        "--debug", action="store_true", help=argparse.SUPPRESS
+    )
+    parent_parser_subcommands = parent_parser.add_subparsers(
+        dest="subcommand", help=False
+    )
+
+    cse_run_subcommand = parent_parser_subcommands.add_parser(
+        "run", parents=[parent_parser_flags, cse_run_parser], help="run a cse command"
+    )
+    cse_run_subcommand.set_defaults(func=cse_run)
+
+    cse_sync_subcommand = parent_parser_subcommands.add_parser(
         "sync",
-        parents=[parent_flags, sync_parse],
+        parents=[parent_parser_flags, cse_sync_parser],
         help="sync files or directories between local and cse environment",
     )
-    sync.set_defaults(func=cse_sync)
+    cse_sync_subcommand.set_defaults(func=cse_sync)
 
-    return parser.parse_args()
+    return parent_parser.parse_args()
 
 
 def display_output(lines: str) -> None:
