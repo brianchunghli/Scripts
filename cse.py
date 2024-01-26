@@ -106,6 +106,7 @@ def output_file(*args: tuple) -> None:
 
 
 def execute_and_stream(command: list, streaming: bool) -> str:
+    """spawns a subprocess to run cse commands and streams output."""
     response = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -132,7 +133,7 @@ def execute_and_stream(command: list, streaming: bool) -> str:
 
 
 def cse_execute(line: str, output=True):
-    """Execute cse server commands."""
+    """Execute commands on the cse server"""
     if output:
         header_print(line)
     line = (
@@ -145,6 +146,8 @@ def cse_execute(line: str, output=True):
 
 
 def cse_run(args) -> None:
+    """Processes a command executed on the cse server"""
+
     flagc, flaga, flags, pos_args = args
     if not pos_args and not flaga and not flags:
         prog_print("no arguments provided")
@@ -180,7 +183,7 @@ def cse_run(args) -> None:
 
 
 def is_directory(files, filename):
-    """Filters the the output of ls -al from subprocess to check for
+    """Filters the output of ls -al from subprocess to check for
     whether the specified file is a directory"""
     is_directory = False
     for f in files:
@@ -201,6 +204,7 @@ def exists(files, filename):
 
 
 def cse_sync(args) -> None:
+    """Sync information between local and the cse server"""
     flagc, flagf, flagd, pos_args = args
 
     if flagd:  # syncs a cse file or directory ==> local
@@ -226,9 +230,11 @@ def cse_sync(args) -> None:
                 cse_course_path,
                 course_path,
             ]
+
             response = subprocess.run(
                 command, capture_output=True, encoding="utf-8"
             ).stdout
+
             if response:
                 color_print(
                     f"==> downloading '{item}' from cse to local computer:\n",
@@ -257,11 +263,13 @@ def cse_sync(args) -> None:
 
         cwd = os.getcwd().replace(os.path.expanduser("~") + "/unsw/cse", "")
         cse_path = CSE + cwd
+
         if os.path.isfile(f):
             cse_path = cse_path + f"/{f}"
 
         command = ["rsync", "-acin", f, cse_path]
         response = subprocess.run(command, capture_output=True, encoding="utf-8").stdout
+
         if response:
             color_print(f"==> uploading '{f}' from local computer to cse:")
             display_output(response)
@@ -288,6 +296,8 @@ def cse_sync(args) -> None:
             print(f"no changes to '{f}'")
 
 
+TIMEOUT: int = 60
+
 configuration = dotenv_values(os.path.expandvars("$HOME") + "/.config/.env")
 if configuration:
     if not (configuration.get("CSE_LOCAL_PATH")):
@@ -308,20 +318,17 @@ else:
         "%s: .env configuration file is required." % (os.path.basename(sys.argv[0]))
     )
 
-TIMEOUT: int = 60
-
-
-def main() -> None:
+if __name__ == "__main__":
     try:
         args = parse_args()
         if args.subcommand is None:
             subprocess.run(["cse", "-h"])
-            return
-        _ = vars(args)
+            sys.exit(1)
+        _dict = vars(args)
         flags = (
-            _[k]
+            _dict[k]
             for k in filter(
-                lambda a: a not in ("func", "debug", "subcommand"), _.keys()
+                lambda a: a not in ("func", "debug", "subcommand"), _dict.keys()
             )
         )
         if args.debug:
@@ -331,7 +338,3 @@ def main() -> None:
         args.func(flags)
     except KeyboardInterrupt:
         pass
-
-
-if __name__ == "__main__":
-    main()
